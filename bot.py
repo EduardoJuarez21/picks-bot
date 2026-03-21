@@ -9,6 +9,8 @@ Uso: python bot.py
 import os
 import time
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -151,6 +153,23 @@ def process_update(update: dict):
         return
     text = (msg.get("text") or "").strip()
     user = msg.get("from", {})
+    chat_id = msg.get("chat", {}).get("id")
+
+    # Comando admin: /msg <user_id> <mensaje>
+    if text.startswith("/msg") and str(chat_id) == str(ADMIN_CHAT):
+        parts = text.split(" ", 2)
+        if len(parts) >= 3:
+            try:
+                target_id = int(parts[1])
+                message = parts[2]
+                send_message(target_id, message)
+                notify_admin(f"✅ Mensaje enviado a [{target_id}]")
+            except ValueError:
+                notify_admin("❌ Formato: /msg <user_id> <mensaje>")
+        else:
+            notify_admin("❌ Formato: /msg <user_id> <mensaje>")
+        return
+
     if text.startswith("/start"):
         handle_start(user)
     elif text.startswith("/trial"):
@@ -176,5 +195,18 @@ def run():
             time.sleep(5)
 
 
+def _start_health_server():
+    port = int(os.getenv("PORT", 8080))
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+        def log_message(self, *args):
+            pass
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+
+
 if __name__ == "__main__":
+    threading.Thread(target=_start_health_server, daemon=True).start()
     run()
