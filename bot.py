@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")          # -1003809470070 (Pickster)
 ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # chat privado de notificaciones
+INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
 SITE_URL   = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
 DB_URL     = os.getenv("DATABASE_URL")
 
@@ -101,6 +102,12 @@ def notify_admin(text: str):
         send_message(int(ADMIN_CHAT), text)
 
 
+def notify_inbox(text: str):
+    chat = INBOX_CHAT or ADMIN_CHAT
+    if chat:
+        send_message(int(chat), text)
+
+
 def handle_start(user: dict):
     name     = user.get("first_name", "")
     username = user.get("username", "")
@@ -111,7 +118,7 @@ def handle_start(user: dict):
         f"📊 Estadísticas públicas: {SITE_URL}\n\n"
         f"Escribe /trial para acceder <b>7 días gratis</b> al canal privado con picks diarios."
     ))
-    notify_admin(f"🔔 /start — {name} (@{username}) [{user['id']}]")
+    notify_inbox(f"🔔 /start — {name} (@{username}) [{user['id']}]")
 
 
 def handle_trial(user: dict):
@@ -145,7 +152,7 @@ def handle_trial(user: dict):
         f"📅 Tu acceso es válido por 7 días."
     ))
     log.info("Trial activado user_id=%s username=%s", user_id, username)
-    notify_admin(f"✅ /trial — {first_name} (@{username}) [{user_id}] — acceso 7 días activado")
+    notify_inbox(f"✅ /trial — {first_name} (@{username}) [{user_id}] — acceso 7 días activado")
 
 
 # ── Polling ───────────────────────────────────────────────────────────────────
@@ -178,7 +185,10 @@ def process_update(update: dict):
     elif text.startswith("/trial"):
         handle_trial(user)
     elif text:
-        log.info("Mensaje no reconocido user_id=%s text=%r", user.get("id"), text[:50])
+        log.info("Mensaje de usuario user_id=%s text=%r", user.get("id"), text[:50])
+        name = user.get("first_name", "")
+        username = user.get("username", "")
+        notify_inbox(f"💬 {name} (@{username}) [{user.get('id')}]: {text}")
 
 
 def run():
