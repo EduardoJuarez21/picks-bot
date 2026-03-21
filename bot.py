@@ -107,7 +107,7 @@ def handle_start(user: dict):
     log.info("/start user_id=%s username=%s name=%s", user["id"], username, name)
     send_message(user["id"], (
         f"Hola {name} 👋\n\n"
-        f"Soy el bot de <b>Picks EJT</b>.\n\n"
+        f"Bienvenido a <b>Pickster</b>.\n\n"
         f"📊 Estadísticas públicas: {SITE_URL}\n\n"
         f"Escribe /trial para acceder <b>7 días gratis</b> al canal privado con picks diarios."
     ))
