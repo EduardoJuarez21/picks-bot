@@ -47,9 +47,36 @@ def _ensure_table():
                     username    TEXT,
                     first_name  TEXT,
                     started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    expires_at  TIMESTAMPTZ NOT NULL
+                    expires_at  TIMESTAMPTZ NOT NULL,
+                    removed_at  TIMESTAMPTZ
                 )
             """)
+            # migración por si la tabla ya existe sin la columna
+            cur.execute("""
+                ALTER TABLE trial_users
+                ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ
+            """)
+        conn.commit()
+
+
+def _get_expired_users() -> list:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, first_name, username
+                FROM trial_users
+                WHERE expires_at < NOW() AND removed_at IS NULL
+            """)
+            return cur.fetchall()
+
+
+def _mark_removed(user_id: int):
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE trial_users SET removed_at = NOW() WHERE user_id = %s",
+                (user_id,)
+            )
         conn.commit()
 
 
@@ -99,6 +126,23 @@ def answer_callback(callback_id: str, text: str = ""):
         "callback_query_id": callback_id,
         "text": text,
     }, timeout=10)
+
+
+def kick_user(user_id: int) -> bool:
+    """Remueve al usuario del canal y levanta el ban para que pueda volver a ser invitado."""
+    r = requests.post(f"{API}/banChatMember", json={
+        "chat_id": CHANNEL_ID,
+        "user_id": user_id,
+    }, timeout=10)
+    if not r.json().get("ok"):
+        log.error("banChatMember failed user_id=%s: %s", user_id, r.json())
+        return False
+    requests.post(f"{API}/unbanChatMember", json={
+        "chat_id": CHANNEL_ID,
+        "user_id": user_id,
+        "only_if_banned": True,
+    }, timeout=10)
+    return True
 
 
 def create_invite_link(expire_date: int) -> str | None:
@@ -276,6 +320,28 @@ def run():
             time.sleep(5)
 
 
+def _run_expiry_check():
+    """Corre cada 24 horas y remueve usuarios con trial expirado."""
+    while True:
+        try:
+            expired = _get_expired_users()
+            for user_id, first_name, username in expired:
+                log.info("Trial expirado, removiendo user_id=%s", user_id)
+                if kick_user(user_id):
+                    _mark_removed(user_id)
+                    send_message(user_id,
+                        "⏰ Tu acceso de prueba de 7 días ha expirado.\n\n"
+                        "Escríbeme si quieres continuar con un plan de suscripción."
+                    )
+                    notify_admin(
+                        f"🔴 Trial expirado — {first_name} (@{username}) [{user_id}] removido del canal"
+                    )
+                    log.info("Removido user_id=%s", user_id)
+        except Exception as e:
+            log.error("Error en expiry check: %s", e)
+        time.sleep(24 * 60 * 60)
+
+
 def _start_health_server():
     port = int(os.getenv("PORT", 8080))
     class Handler(BaseHTTPRequestHandler):
@@ -290,4 +356,5 @@ def _start_health_server():
 
 if __name__ == "__main__":
     threading.Thread(target=_start_health_server, daemon=True).start()
+    threading.Thread(target=_run_expiry_check, daemon=True).start()
     run()
