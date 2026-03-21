@@ -104,6 +104,7 @@ def notify_admin(text: str):
 def handle_start(user: dict):
     name     = user.get("first_name", "")
     username = user.get("username", "")
+    log.info("/start user_id=%s username=%s name=%s", user["id"], username, name)
     send_message(user["id"], (
         f"Hola {name} 👋\n\n"
         f"Soy el bot de <b>Picks EJT</b>.\n\n"
@@ -118,7 +119,9 @@ def handle_trial(user: dict):
     username   = user.get("username", "")
     first_name = user.get("first_name", "")
 
+    log.info("/trial user_id=%s username=%s name=%s", user_id, username, first_name)
     if _has_used_trial(user_id):
+        log.info("Trial ya usado user_id=%s", user_id)
         send_message(user_id,
             "Ya usaste tu prueba gratuita de 7 días.\n\n"
             "Para seguir recibiendo picks escríbeme para ver los planes de suscripción."
@@ -174,6 +177,8 @@ def process_update(update: dict):
         handle_start(user)
     elif text.startswith("/trial"):
         handle_trial(user)
+    elif text:
+        log.info("Mensaje no reconocido user_id=%s text=%r", user.get("id"), text[:50])
 
 
 def run():
