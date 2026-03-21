@@ -195,6 +195,10 @@ def handle_start(user: dict):
         f"En breve recibirás tu link de acceso."
     ))
 
+    # Guardar datos del usuario antes de esperar aprobación
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    _save_trial(user_id, username, name, expires_at)
+
     buttons = {
         "inline_keyboard": [[
             {"text": "✅ Aprobar", "callback_data": f"approve:{user_id}"},
@@ -223,8 +227,6 @@ def handle_approve(user_id: int, callback_id: str, message_id: int, chat_id: int
     if not link:
         answer_callback(callback_id, "Error generando el link.")
         return
-
-    _save_trial(user_id, "", "", expires_at)
 
     send_message(user_id, (
         f"✅ <b>Acceso aprobado — 7 días gratis</b>\n\n"
