@@ -24,8 +24,9 @@ log = logging.getLogger(__name__)
 
 TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")          # -1003809470070 (Pickster)
-ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # chat privado de notificaciones
+ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
 INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
+CMD_CHAT   = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
 SITE_URL   = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
 DB_URL     = os.getenv("DATABASE_URL")
 
@@ -279,18 +280,19 @@ def process_update(update: dict):
     chat_id = msg.get("chat", {}).get("id")
 
     # Comandos admin
-    if str(chat_id) == str(ADMIN_CHAT):
+    _cmd_chat = CMD_CHAT or ADMIN_CHAT
+    if str(chat_id) == str(_cmd_chat):
         if text.startswith("/msg"):
             parts = text.split(" ", 2)
             if len(parts) >= 3:
                 try:
                     target_id = int(parts[1])
                     send_message(target_id, parts[2])
-                    notify_admin(f"✅ Mensaje enviado a [{target_id}]")
+                    send_message(int(_cmd_chat), f"✅ Mensaje enviado a [{target_id}]")
                 except ValueError:
-                    notify_admin("❌ Formato: /msg <user_id> <mensaje>")
+                    send_message(int(_cmd_chat), "❌ Formato: /msg <user_id> <mensaje>")
             else:
-                notify_admin("❌ Formato: /msg <user_id> <mensaje>")
+                send_message(int(_cmd_chat), "❌ Formato: /msg <user_id> <mensaje>")
             return
 
         if text.startswith("/invite"):
@@ -306,13 +308,13 @@ def process_update(update: dict):
                             f"Úsalo para unirte al canal privado:\n{link}\n\n"
                             f"⏳ El link expira en 24 horas — úsalo ya."
                         ))
-                        notify_admin(f"✅ Invite enviado a [{target_id}]")
+                        send_message(int(_cmd_chat), f"✅ Invite enviado a [{target_id}]")
                     else:
-                        notify_admin(f"❌ Error generando link para [{target_id}]")
+                        send_message(int(_cmd_chat), f"❌ Error generando link para [{target_id}]")
                 except ValueError:
-                    notify_admin("❌ Formato: /invite <user_id>")
+                    send_message(int(_cmd_chat), "❌ Formato: /invite <user_id>")
             else:
-                notify_admin("❌ Formato: /invite <user_id>")
+                send_message(int(_cmd_chat), "❌ Formato: /invite <user_id>")
             return
 
     if text.startswith("/start"):
