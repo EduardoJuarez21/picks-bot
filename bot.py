@@ -278,19 +278,42 @@ def process_update(update: dict):
     user    = msg.get("from", {})
     chat_id = msg.get("chat", {}).get("id")
 
-    # Comando admin: /msg <user_id> <mensaje>
-    if text.startswith("/msg") and str(chat_id) == str(ADMIN_CHAT):
-        parts = text.split(" ", 2)
-        if len(parts) >= 3:
-            try:
-                target_id = int(parts[1])
-                send_message(target_id, parts[2])
-                notify_admin(f"✅ Mensaje enviado a [{target_id}]")
-            except ValueError:
+    # Comandos admin
+    if str(chat_id) == str(ADMIN_CHAT):
+        if text.startswith("/msg"):
+            parts = text.split(" ", 2)
+            if len(parts) >= 3:
+                try:
+                    target_id = int(parts[1])
+                    send_message(target_id, parts[2])
+                    notify_admin(f"✅ Mensaje enviado a [{target_id}]")
+                except ValueError:
+                    notify_admin("❌ Formato: /msg <user_id> <mensaje>")
+            else:
                 notify_admin("❌ Formato: /msg <user_id> <mensaje>")
-        else:
-            notify_admin("❌ Formato: /msg <user_id> <mensaje>")
-        return
+            return
+
+        if text.startswith("/invite"):
+            parts = text.split(" ", 1)
+            if len(parts) == 2:
+                try:
+                    target_id = int(parts[1])
+                    expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
+                    link = create_invite_link(expire_unix)
+                    if link:
+                        send_message(target_id, (
+                            f"✅ <b>Acceso al canal activado</b>\n\n"
+                            f"Úsalo para unirte al canal privado:\n{link}\n\n"
+                            f"⏳ El link expira en 24 horas — úsalo ya."
+                        ))
+                        notify_admin(f"✅ Invite enviado a [{target_id}]")
+                    else:
+                        notify_admin(f"❌ Error generando link para [{target_id}]")
+                except ValueError:
+                    notify_admin("❌ Formato: /invite <user_id>")
+            else:
+                notify_admin("❌ Formato: /invite <user_id>")
+            return
 
     if text.startswith("/start"):
         handle_start(user)
