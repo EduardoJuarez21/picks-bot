@@ -331,6 +331,25 @@ def process_update(update: dict):
                 send_message(int(_cmd_chat), "❌ Formato: /msg <user_id> <mensaje>")
             return
 
+        if text.startswith("/unban"):
+            parts = text.split(" ", 1)
+            if len(parts) == 2:
+                try:
+                    target_id = int(parts[1])
+                    r = requests.post(f"{API}/unbanChatMember", json={
+                        "chat_id": CHANNEL_ID,
+                        "user_id": target_id,
+                    }, timeout=10)
+                    if r.json().get("ok"):
+                        send_message(int(_cmd_chat), f"✅ Unban aplicado a [{target_id}]")
+                    else:
+                        send_message(int(_cmd_chat), f"❌ Error: {r.json()}")
+                except ValueError:
+                    send_message(int(_cmd_chat), "❌ Formato: /unban <user_id>")
+            else:
+                send_message(int(_cmd_chat), "❌ Formato: /unban <user_id>")
+            return
+
         if text.startswith("/invite"):
             parts = text.split(" ", 2)
             if len(parts) >= 2:
