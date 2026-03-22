@@ -166,6 +166,7 @@ def create_invite_link(expire_date: int) -> str | None:
         "member_limit": 1,
     }, timeout=10)
     data = resp.json()
+    log.info("createChatInviteLink response: %s", data)
     if data.get("ok"):
         return data["result"]["invite_link"]
     log.error("createChatInviteLink failed: %s", data)
