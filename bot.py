@@ -28,7 +28,13 @@ ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
 INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
 CMD_CHAT   = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
 SITE_URL   = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
+KOFI_URL   = os.getenv("KOFI_URL", "https://ko-fi.com/pickster77896")
 DB_URL     = os.getenv("DATABASE_URL")
+
+# Estado de conversación en memoria
+# { user_id: "waiting_email" }
+_conv_state: dict[int, str] = {}
+_conv_data:  dict[int, dict] = {}  # guarda name/username mientras espera email
 
 API = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -52,10 +58,14 @@ def _ensure_table():
                     removed_at  TIMESTAMPTZ
                 )
             """)
-            # migración por si la tabla ya existe sin la columna
+            # migraciones por si la tabla ya existe sin las columnas
             cur.execute("""
                 ALTER TABLE trial_users
                 ADD COLUMN IF NOT EXISTS removed_at TIMESTAMPTZ
+            """)
+            cur.execute("""
+                ALTER TABLE trial_users
+                ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'vip'
             """)
         conn.commit()
 
@@ -88,14 +98,17 @@ def _has_used_trial(user_id: int) -> bool:
             return cur.fetchone() is not None
 
 
-def _save_trial(user_id: int, username: str, first_name: str, expires_at: datetime):
+def _save_trial(user_id: int, username: str, first_name: str, expires_at: datetime, plan: str = "vip"):
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO trial_users (user_id, username, first_name, expires_at)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id) DO NOTHING
-            """, (user_id, username, first_name, expires_at))
+                INSERT INTO trial_users (user_id, username, first_name, expires_at, plan)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                    SET expires_at = EXCLUDED.expires_at,
+                        plan       = EXCLUDED.plan,
+                        removed_at = NULL
+            """, (user_id, username, first_name, expires_at, plan))
         conn.commit()
 
 
@@ -175,40 +188,61 @@ def notify_inbox(text: str, reply_markup: dict = None):
 # ── Handlers ─────────────────────────────────────────────────────────────────
 
 def handle_start(user: dict):
-    user_id    = user["id"]
-    name       = user.get("first_name", "")
-    username   = user.get("username", "")
+    user_id  = user["id"]
+    name     = user.get("first_name", "")
+    username = user.get("username", "")
     log.info("/start user_id=%s username=%s name=%s", user_id, username, name)
 
     if _has_used_trial(user_id):
-        send_message(user_id,
-            "Ya usaste tu prueba gratuita de 7 días.\n\n"
-            "Para seguir recibiendo picks escríbeme para ver los planes de suscripción."
+        # Ya usó trial — solo puede pagar
+        send_message(user_id, (
+            f"Hola {name} 👋\n\n"
+            f"Ya utilizaste tu prueba gratuita.\n\n"
+            f"Para seguir accediendo al canal realiza tu pago aquí:\n"
+            f"👉 {KOFI_URL}\n\n"
+            f"Una vez que hayas pagado escríbeme <b>ya pagué</b> y te confirmo el acceso."
+        ))
+    else:
+        # Usuario nuevo — puede pedir trial
+        send_message(user_id, (
+            f"Hola {name} 👋\n\n"
+            f"Bienvenido a <b>Pickster</b>.\n\n"
+            f"📊 Estadísticas públicas: {SITE_URL}\n\n"
+            f"Tienes dos opciones:\n\n"
+            f"🆓 <b>Prueba gratuita de 7 días</b> — escríbeme <b>quiero trial</b>\n"
+            f"💳 <b>Suscripción mensual</b> — paga aquí: {KOFI_URL} y escríbeme <b>ya pagué</b>"
+        ))
+        notify_inbox(
+            f"🔔 Nuevo usuario\n"
+            f"👤 {name} (@{username}) [{user_id}]"
         )
-        return
 
-    send_message(user_id, (
-        f"Hola {name} 👋\n\n"
-        f"Bienvenido a <b>Pickster</b>.\n\n"
-        f"📊 Estadísticas públicas: {SITE_URL}\n\n"
-        f"Tu solicitud de acceso al canal privado ha sido enviada. "
-        f"En breve recibirás tu link de acceso."
-    ))
 
-    # Guardar datos del usuario antes de esperar aprobación
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-    _save_trial(user_id, username, name, expires_at)
+def handle_payment_claim(user: dict):
+    user_id  = user["id"]
+    name     = user.get("first_name", "")
+    username = user.get("username", "")
 
-    buttons = {
-        "inline_keyboard": [[
-            {"text": "✅ Aprobar", "callback_data": f"approve:{user_id}"},
-            {"text": "❌ Rechazar", "callback_data": f"reject:{user_id}"},
-        ]]
-    }
+    _conv_state[user_id] = "waiting_email"
+    _conv_data[user_id]  = {"name": name, "username": username}
+
+    send_message(user_id, "¿Con qué correo realizaste el pago en Ko-fi?")
+
+
+def handle_email_response(user_id: int, email: str):
+    info     = _conv_data.pop(user_id, {})
+    name     = info.get("name", "")
+    username = info.get("username", "")
+    _conv_state.pop(user_id, None)
+
+    send_message(user_id,
+        "✅ Recibido. En breve verifico tu pago y te envío el acceso al canal."
+    )
     notify_inbox(
-        f"🔔 Solicitud de acceso\n"
-        f"👤 {name} (@{username}) [{user_id}]",
-        reply_markup=buttons
+        f"💰 Pago pendiente de verificación\n"
+        f"👤 {name} (@{username}) [{user_id}]\n"
+        f"📧 Correo Ko-fi: <code>{email}</code>\n\n"
+        f"Usa /invite {user_id} para dar acceso."
     )
 
 
@@ -298,34 +332,63 @@ def process_update(update: dict):
             return
 
         if text.startswith("/invite"):
-            parts = text.split(" ", 1)
-            if len(parts) == 2:
+            parts = text.split(" ", 2)
+            if len(parts) >= 2:
                 try:
-                    target_id = int(parts[1])
+                    target_id  = int(parts[1])
+                    is_trial   = len(parts) == 3 and parts[2].strip().lower() == "trial"
+                    plan       = "trial" if is_trial else "vip"
+                    days       = 7 if is_trial else 30
+                    expires_at = datetime.now(timezone.utc) + timedelta(days=days)
                     expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
                     link = create_invite_link(expire_unix)
                     if link:
+                        _save_trial(target_id, "", "", expires_at, plan)
                         send_message(target_id, (
                             f"✅ <b>Acceso al canal activado</b>\n\n"
                             f"Úsalo para unirte al canal privado:\n{link}\n\n"
-                            f"⏳ El link expira en 24 horas — úsalo ya."
+                            f"⏳ El link expira en 24 horas — úsalo ya.\n"
+                            f"📅 Tu acceso es válido por {days} días."
                         ))
-                        send_message(int(_cmd_chat), f"✅ Invite enviado a [{target_id}]")
+                        send_message(int(_cmd_chat), f"✅ Invite enviado a [{target_id}] — plan {plan} ({days} días) registrado.")
                     else:
                         send_message(int(_cmd_chat), f"❌ Error generando link para [{target_id}]")
                 except ValueError:
-                    send_message(int(_cmd_chat), "❌ Formato: /invite <user_id>")
+                    send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial]")
             else:
-                send_message(int(_cmd_chat), "❌ Formato: /invite <user_id>")
+                send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial]")
             return
+
+    user_id = user.get("id")
 
     if text.startswith("/start"):
         handle_start(user)
+    elif _conv_state.get(user_id) == "waiting_email":
+        handle_email_response(user_id, text)
+    elif any(p in text.lower() for p in ["ya pagué", "ya pague", "ya pago", "pagué", "pague"]):
+        handle_payment_claim(user)
+    elif any(p in text.lower() for p in ["quiero trial", "trial", "prueba"]):
+        if not _has_used_trial(user_id):
+            name     = user.get("first_name", "")
+            username = user.get("username", "")
+            send_message(user_id,
+                "✅ Solicitud de prueba recibida. En breve te envío el acceso al canal."
+            )
+            notify_inbox(
+                f"🆓 Solicitud de trial\n"
+                f"👤 {name} (@{username}) [{user_id}]\n\n"
+                f"Usa /invite {user_id} trial para dar acceso."
+            )
+        else:
+            send_message(user_id,
+                "Ya utilizaste tu prueba gratuita.\n\n"
+                f"Para continuar realiza tu pago aquí: {KOFI_URL}"
+            )
     elif text:
-        log.info("Mensaje de usuario user_id=%s text=%r", user.get("id"), text[:50])
+        log.info("Mensaje de usuario user_id=%s text=%r", user_id, text[:50])
         name     = user.get("first_name", "")
         username = user.get("username", "")
-        notify_inbox(f"💬 {name} (@{username}) [{user.get('id')}]: {text}")
+        notify_inbox(f"💬 {name} (@{username}) [{user_id}]: {text}")
 
 
 def run():
