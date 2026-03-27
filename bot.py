@@ -28,19 +28,13 @@ CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")          # -1003809470070 (Pickster)
 ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
 INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
 CMD_CHAT   = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
-SITE_URL          = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
-KOFI_URL          = os.getenv("KOFI_URL", "https://ko-fi.com/pickster77896")
+SITE_URL          = os.getenv("SITE_URL", "https://picksterx.win")
 DB_URL            = os.getenv("DATABASE_URL")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID   = os.getenv("STRIPE_PRICE_ID", "price_1TFRnp3CGjhkjYbVsnHAAlOl")
 
 if STRIPE_SECRET_KEY:
     stripe_lib.api_key = STRIPE_SECRET_KEY
-
-# Estado de conversación en memoria
-# { user_id: "waiting_email" }
-_conv_state: dict[int, str] = {}
-_conv_data:  dict[int, dict] = {}  # guarda name/username mientras espera email
 
 API = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -230,7 +224,7 @@ def handle_start(user: dict, param: str = ""):
                 {"text": "💳 Pagar ahora", "url": checkout_url}
             ]]})
         else:
-            send_message(user_id, f"Para suscribirte ingresa aquí: {KOFI_URL}")
+            send_message(user_id, "Error generando el link de pago. Intenta de nuevo.")
         return
 
     if _has_used_trial(user_id):
@@ -304,35 +298,7 @@ def handle_subscribe_request(user: dict, callback_id: str | None):
     else:
         if callback_id:
             answer_callback(callback_id, "Error generando el link de pago.")
-        send_message(user_id, f"Para suscribirte ingresa aquí: {KOFI_URL}")
-
-
-def handle_payment_claim(user: dict):
-    user_id  = user["id"]
-    name     = user.get("first_name", "")
-    username = user.get("username", "")
-
-    _conv_state[user_id] = "waiting_email"
-    _conv_data[user_id]  = {"name": name, "username": username}
-
-    send_message(user_id, "¿Con qué correo realizaste el pago en Ko-fi?")
-
-
-def handle_email_response(user_id: int, email: str):
-    info     = _conv_data.pop(user_id, {})
-    name     = info.get("name", "")
-    username = info.get("username", "")
-    _conv_state.pop(user_id, None)
-
-    send_message(user_id,
-        "✅ Recibido. En breve verifico tu pago y te envío el acceso al canal."
-    )
-    notify_inbox(
-        f"💰 Pago pendiente de verificación\n"
-        f"👤 {name} (@{username}) [{user_id}]\n"
-        f"📧 Correo Ko-fi: <code>{email}</code>\n\n"
-        f"Usa /invite {user_id} para dar acceso."
-    )
+        send_message(user_id, "Error generando el link de pago. Intenta de nuevo.")
 
 
 def handle_approve(user_id: int, callback_id: str, message_id: int, chat_id: int):
@@ -483,10 +449,6 @@ def process_update(update: dict):
     if text.startswith("/start"):
         param = text.split(" ", 1)[1].strip() if " " in text else ""
         handle_start(user, param)
-    elif _conv_state.get(user_id) == "waiting_email":
-        handle_email_response(user_id, text)
-    elif any(p in text.lower() for p in ["ya pagué", "ya pague", "ya pago", "pagué", "pague"]):
-        handle_payment_claim(user)
     elif any(p in text.lower() for p in ["quiero trial", "trial", "prueba"]):
         if not _has_used_trial(user_id):
             name     = user.get("first_name", "")
@@ -500,10 +462,7 @@ def process_update(update: dict):
                 f"Usa /invite {user_id} trial para dar acceso."
             )
         else:
-            send_message(user_id,
-                "Ya utilizaste tu prueba gratuita.\n\n"
-                f"Para continuar realiza tu pago aquí: {KOFI_URL}"
-            )
+            handle_subscribe_request(user, None)
     elif text:
         log.info("Mensaje de usuario user_id=%s text=%r", user_id, text[:50])
         name     = user.get("first_name", "")
