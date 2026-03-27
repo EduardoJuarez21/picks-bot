@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 import psycopg2
+import stripe as stripe_lib
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,9 +28,14 @@ CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")          # -1003809470070 (Pickster)
 ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
 INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
 CMD_CHAT   = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
-SITE_URL   = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
-KOFI_URL   = os.getenv("KOFI_URL", "https://ko-fi.com/pickster77896")
-DB_URL     = os.getenv("DATABASE_URL")
+SITE_URL          = os.getenv("SITE_URL", "https://guileless-sorbet-6f7a7a.netlify.app")
+KOFI_URL          = os.getenv("KOFI_URL", "https://ko-fi.com/pickster77896")
+DB_URL            = os.getenv("DATABASE_URL")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_PRICE_ID   = os.getenv("STRIPE_PRICE_ID", "price_1TFRnp3CGjhkjYbVsnHAAlOl")
+
+if STRIPE_SECRET_KEY:
+    stripe_lib.api_key = STRIPE_SECRET_KEY
 
 # Estado de conversación en memoria
 # { user_id: "waiting_email" }
@@ -172,6 +178,25 @@ def create_invite_link(expire_date: int) -> str | None:
     return None
 
 
+# ── Stripe ───────────────────────────────────────────────────────────────────
+
+def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
+    if not STRIPE_SECRET_KEY:
+        return None
+    try:
+        session = stripe_lib.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            metadata={"telegram_id": str(telegram_id), "telegram_name": name},
+            success_url=f"{SITE_URL}/success.html",
+            cancel_url=SITE_URL,
+        )
+        return session.url
+    except Exception as e:
+        log.error("Stripe checkout error: %s", e)
+        return None
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def notify_admin(text: str):
@@ -187,35 +212,81 @@ def notify_inbox(text: str, reply_markup: dict = None):
 
 # ── Handlers ─────────────────────────────────────────────────────────────────
 
-def handle_start(user: dict):
+def handle_start(user: dict, param: str = ""):
     user_id  = user["id"]
     name     = user.get("first_name", "")
     username = user.get("username", "")
-    log.info("/start user_id=%s username=%s name=%s", user_id, username, name)
+    log.info("/start user_id=%s username=%s name=%s param=%s", user_id, username, name, param)
+
+    # Deep link desde el sitio web — ir directo al pago
+    if param == "pay":
+        checkout_url = create_stripe_checkout(user_id, name)
+        if checkout_url:
+            send_message(user_id, (
+                f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
+                f"Completa tu pago aquí:\n{checkout_url}\n\n"
+                f"Una vez pagado recibirás el acceso al canal automáticamente."
+            ))
+        else:
+            send_message(user_id, f"Para suscribirte ingresa aquí: {KOFI_URL}")
+        return
 
     if _has_used_trial(user_id):
-        # Ya usó trial — solo puede pagar
         send_message(user_id, (
             f"Hola {name} 👋\n\n"
             f"Ya utilizaste tu prueba gratuita.\n\n"
-            f"Para seguir accediendo al canal realiza tu pago aquí:\n"
-            f"👉 {KOFI_URL}\n\n"
-            f"Una vez que hayas pagado escríbeme <b>ya pagué</b> y te confirmo el acceso."
-        ))
+            f"Para continuar con acceso VIP, suscríbete:"
+        ), reply_markup={"inline_keyboard": [[
+            {"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}
+        ]]})
     else:
-        # Usuario nuevo — puede pedir trial
         send_message(user_id, (
             f"Hola {name} 👋\n\n"
             f"Bienvenido a <b>Pickster</b>.\n\n"
             f"📊 Estadísticas públicas: {SITE_URL}\n\n"
-            f"Tienes dos opciones:\n\n"
-            f"🆓 <b>Prueba gratuita de 7 días</b> — escríbeme <b>quiero trial</b>\n"
-            f"💳 <b>Suscripción mensual</b> — paga aquí: {KOFI_URL} y escríbeme <b>ya pagué</b>"
-        ))
+            f"Elige tu opción:"
+        ), reply_markup={"inline_keyboard": [
+            [{"text": "🆓 Prueba gratuita (7 días)", "callback_data": "trial"}],
+            [{"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}],
+        ]})
         notify_inbox(
             f"🔔 Nuevo usuario\n"
             f"👤 {name} (@{username}) [{user_id}]"
         )
+
+
+def handle_trial_request(user: dict, callback_id: str):
+    user_id  = user["id"]
+    name     = user.get("first_name", "")
+    username = user.get("username", "")
+    if _has_used_trial(user_id):
+        answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
+        return
+    answer_callback(callback_id)
+    send_message(user_id, "✅ Solicitud de prueba recibida. En breve te envío el acceso al canal.")
+    notify_inbox(
+        f"🆓 Solicitud de trial\n"
+        f"👤 {name} (@{username}) [{user_id}]\n\n"
+        f"Usa /invite {user_id} trial para dar acceso."
+    )
+
+
+def handle_subscribe_request(user: dict, callback_id: str | None):
+    user_id = user["id"]
+    name    = user.get("first_name", "")
+    checkout_url = create_stripe_checkout(user_id, name)
+    if checkout_url:
+        if callback_id:
+            answer_callback(callback_id)
+        send_message(user_id, (
+            f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
+            f"Completa tu pago aquí:\n{checkout_url}\n\n"
+            f"Una vez pagado recibirás el acceso al canal automáticamente."
+        ))
+    else:
+        if callback_id:
+            answer_callback(callback_id, "Error generando el link de pago.")
+        send_message(user_id, f"Para suscribirte ingresa aquí: {KOFI_URL}")
 
 
 def handle_payment_claim(user: dict):
@@ -297,6 +368,12 @@ def handle_callback_query(callback: dict):
     elif data.startswith("reject:"):
         user_id = int(data.split(":")[1])
         handle_reject(user_id, callback_id, message_id, chat_id)
+    elif data == "trial":
+        user_from = callback.get("from", {})
+        handle_trial_request(user_from, callback_id)
+    elif data == "subscribe":
+        user_from = callback.get("from", {})
+        handle_subscribe_request(user_from, callback_id)
     else:
         answer_callback(callback_id)
 
@@ -360,9 +437,14 @@ def process_update(update: dict):
                     days       = 7 if is_trial else 30
                     expires_at = datetime.now(timezone.utc) + timedelta(days=days)
                     expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
+                    # obtener first_name y username del usuario
+                    chat_resp = requests.post(f"{API}/getChat", json={"chat_id": target_id}, timeout=10).json()
+                    chat_info = chat_resp.get("result", {})
+                    first_name = chat_info.get("first_name", "")
+                    username   = chat_info.get("username", "")
                     link = create_invite_link(expire_unix)
                     if link:
-                        _save_trial(target_id, "", "", expires_at, plan)
+                        _save_trial(target_id, username, first_name, expires_at, plan)
                         send_message(target_id, (
                             f"✅ <b>Acceso al canal activado</b>\n\n"
                             f"Úsalo para unirte al canal privado:\n{link}\n\n"
@@ -381,7 +463,8 @@ def process_update(update: dict):
     user_id = user.get("id")
 
     if text.startswith("/start"):
-        handle_start(user)
+        param = text.split(" ", 1)[1].strip() if " " in text else ""
+        handle_start(user, param)
     elif _conv_state.get(user_id) == "waiting_email":
         handle_email_response(user_id, text)
     elif any(p in text.lower() for p in ["ya pagué", "ya pague", "ya pago", "pagué", "pague"]):
