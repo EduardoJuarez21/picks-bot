@@ -78,7 +78,7 @@ def _get_expired_users() -> list:
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, first_name, username
+                SELECT user_id, first_name, username, plan
                 FROM trial_users
                 WHERE expires_at < NOW() AND removed_at IS NULL
             """)
@@ -500,16 +500,27 @@ def _run_expiry_check():
     while True:
         try:
             expired = _get_expired_users()
-            for user_id, first_name, username in expired:
-                log.info("Trial expirado, removiendo user_id=%s", user_id)
+            for user_id, first_name, username, plan in expired:
+                log.info("Expirado plan=%s removiendo user_id=%s", plan, user_id)
                 if kick_user(user_id):
                     _mark_removed(user_id)
-                    send_message(user_id,
-                        "⏰ Tu acceso de prueba de 7 días ha expirado.\n\n"
-                        "Escríbeme si quieres continuar con un plan de suscripción."
-                    )
+                    checkout_url = create_stripe_checkout(user_id, first_name or "")
+                    if plan == "trial":
+                        text = (
+                            "⏰ <b>Tu prueba gratuita de 7 días ha expirado.</b>\n\n"
+                            "¿Te gustó el servicio? Suscríbete para seguir recibiendo picks VIP:"
+                        )
+                    else:
+                        text = (
+                            "⏰ <b>Tu suscripción VIP ha expirado.</b>\n\n"
+                            "Renueva para seguir teniendo acceso al canal de picks:"
+                        )
+                    markup = {"inline_keyboard": [[
+                        {"text": "💳 Renovar — MXN 250", "url": checkout_url}
+                    ]]} if checkout_url else None
+                    send_message(user_id, text, reply_markup=markup)
                     notify_admin(
-                        f"🔴 Trial expirado — {first_name} (@{username}) [{user_id}] removido del canal"
+                        f"🔴 {plan.upper()} expirado — {first_name} (@{username}) [{user_id}] removido del canal"
                     )
                     log.info("Removido user_id=%s", user_id)
         except Exception as e:
