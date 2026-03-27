@@ -271,10 +271,12 @@ def handle_trial_request(user: dict, callback_id: str):
     answer_callback(callback_id)
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
-        f"Úsalo para unirte al canal privado:\n{link}\n\n"
+        f"Toca el botón para unirte al canal privado.\n\n"
         f"⏳ El link expira en 24 horas — úsalo ya.\n"
         f"📅 Tu acceso es válido por 7 días."
-    ))
+    ), reply_markup={"inline_keyboard": [[
+        {"text": "📢 Unirse al canal", "url": link}
+    ]]})
     notify_inbox(
         f"🆓 Trial activado automáticamente\n"
         f"👤 {name} (@{username}) [{user_id}]"
