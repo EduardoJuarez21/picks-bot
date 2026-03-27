@@ -224,9 +224,11 @@ def handle_start(user: dict, param: str = ""):
         if checkout_url:
             send_message(user_id, (
                 f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
-                f"Completa tu pago aquí:\n{checkout_url}\n\n"
+                f"Toca el botón para completar tu pago.\n\n"
                 f"Una vez pagado recibirás el acceso al canal automáticamente."
-            ))
+            ), reply_markup={"inline_keyboard": [[
+                {"text": "💳 Pagar ahora", "url": checkout_url}
+            ]]})
         else:
             send_message(user_id, f"Para suscribirte ingresa aquí: {KOFI_URL}")
         return
@@ -280,9 +282,11 @@ def handle_subscribe_request(user: dict, callback_id: str | None):
             answer_callback(callback_id)
         send_message(user_id, (
             f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
-            f"Completa tu pago aquí:\n{checkout_url}\n\n"
+            f"Toca el botón para completar tu pago.\n\n"
             f"Una vez pagado recibirás el acceso al canal automáticamente."
-        ))
+        ), reply_markup={"inline_keyboard": [[
+            {"text": "💳 Pagar ahora", "url": checkout_url}
+        ]]})
     else:
         if callback_id:
             answer_callback(callback_id, "Error generando el link de pago.")
