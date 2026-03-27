@@ -182,6 +182,7 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
             mode="subscription",
             line_items=[{"price": STRIPE_PRICE_ID}],
             metadata={"telegram_id": str(telegram_id), "telegram_name": name},
+            subscription_data={"metadata": {"telegram_id": str(telegram_id), "telegram_name": name}},
             success_url=f"{SITE_URL}/success.html",
             cancel_url=SITE_URL,
         )
