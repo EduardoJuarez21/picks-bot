@@ -186,7 +186,7 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
     try:
         session = stripe_lib.checkout.Session.create(
             mode="subscription",
-            line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            line_items=[{"price": STRIPE_PRICE_ID}],
             metadata={"telegram_id": str(telegram_id), "telegram_name": name},
             success_url=f"{SITE_URL}/success.html",
             cancel_url=SITE_URL,
