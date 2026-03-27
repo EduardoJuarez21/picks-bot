@@ -264,12 +264,26 @@ def handle_trial_request(user: dict, callback_id: str):
     if _has_used_trial(user_id):
         answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
         return
+
+    expires_at  = datetime.now(timezone.utc) + timedelta(days=7)
+    expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
+    link = create_invite_link(expire_unix)
+
+    if not link:
+        answer_callback(callback_id, "Error generando el acceso. Intenta de nuevo.")
+        return
+
+    _save_trial(user_id, username, name, expires_at, "trial")
     answer_callback(callback_id)
-    send_message(user_id, "✅ Solicitud de prueba recibida. En breve te envío el acceso al canal.")
+    send_message(user_id, (
+        f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
+        f"Úsalo para unirte al canal privado:\n{link}\n\n"
+        f"⏳ El link expira en 24 horas — úsalo ya.\n"
+        f"📅 Tu acceso es válido por 7 días."
+    ))
     notify_inbox(
-        f"🆓 Solicitud de trial\n"
-        f"👤 {name} (@{username}) [{user_id}]\n\n"
-        f"Usa /invite {user_id} trial para dar acceso."
+        f"🆓 Trial activado automáticamente\n"
+        f"👤 {name} (@{username}) [{user_id}]"
     )
 
 
