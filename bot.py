@@ -67,6 +67,10 @@ def _ensure_table():
                 ALTER TABLE trial_users
                 ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'vip'
             """)
+            cur.execute("""
+                ALTER TABLE trial_users
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            """)
         conn.commit()
 
 
