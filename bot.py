@@ -85,6 +85,17 @@ def _get_expired_users() -> list:
             return cur.fetchall()
 
 
+def _get_manually_removed_users() -> list:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_id, first_name, username, plan
+                FROM trial_users
+                WHERE removed_at IS NOT NULL AND expires_at > NOW()
+            """)
+            return cur.fetchall()
+
+
 def _mark_removed(user_id: int):
     with _db() as conn:
         with conn.cursor() as cur:
@@ -524,6 +535,14 @@ def _run_expiry_check():
                         f"🔴 {plan.upper()} expirado — {first_name} (@{username}) [{user_id}] removido del canal"
                     )
                     log.info("Removido user_id=%s", user_id)
+
+            for user_id, first_name, username, plan in _get_manually_removed_users():
+                log.info("Remoción manual plan=%s user_id=%s", plan, user_id)
+                if kick_user(user_id):
+                    notify_admin(
+                        f"🔴 Removido manualmente — {first_name} (@{username}) [{user_id}]"
+                    )
+                    log.info("Removido manualmente user_id=%s", user_id)
         except Exception as e:
             log.error("Error en expiry check: %s", e)
         time.sleep(24 * 60 * 60)
