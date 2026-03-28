@@ -210,8 +210,9 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def notify_admin(text: str):
-    if ADMIN_CHAT:
-        send_message(int(ADMIN_CHAT), text)
+    chat = CMD_CHAT or ADMIN_CHAT
+    if chat:
+        send_message(int(chat), text)
 
 
 def notify_inbox(text: str, reply_markup: dict = None):
