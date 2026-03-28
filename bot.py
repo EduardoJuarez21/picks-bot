@@ -167,6 +167,7 @@ def create_invite_link(expire_date: int) -> str | None:
     resp = requests.post(f"{API}/createChatInviteLink", json={
         "chat_id": CHANNEL_ID,
         "expire_date": expire_date,
+        "member_limit": 1,
     }, timeout=10)
     data = resp.json()
     log.info("createChatInviteLink response: %s", data)
