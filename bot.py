@@ -387,6 +387,25 @@ def process_update(update: dict):
         handle_callback_query(update["callback_query"])
         return
 
+    if "chat_member" in update:
+        cm     = update["chat_member"]
+        new    = cm.get("new_chat_member", {})
+        status = new.get("status")
+        if status == "member":
+            user_id    = new["user"]["id"]
+            first_name = new["user"].get("first_name", "")
+            username   = new["user"].get("username", "")
+            if not _has_used_trial(user_id):
+                log.warning("Intruso detectado user_id=%s — no registrado, kickeando", user_id)
+                kick_user(user_id)
+                send_message(user_id, (
+                    "⚠️ <b>Problema con tu acceso</b>\n\n"
+                    "No encontramos una suscripción activa asociada a tu cuenta.\n\n"
+                    "Si crees que es un error, contáctanos para resolverlo."
+                ))
+                notify_admin(f"🚨 Intruso kickeado — {first_name} (@{username}) [{user_id}] entró sin registro")
+        return
+
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return
@@ -494,7 +513,7 @@ def run():
     offset = None
     while True:
         try:
-            params = {"timeout": 30, "allowed_updates": ["message", "callback_query"]}
+            params = {"timeout": 30, "allowed_updates": ["message", "callback_query", "chat_member"]}
             if offset:
                 params["offset"] = offset
             resp = requests.get(f"{API}/getUpdates", params=params, timeout=40)
