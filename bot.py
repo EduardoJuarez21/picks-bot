@@ -186,11 +186,13 @@ def kick_user(user_id: int) -> bool:
     if not r.json().get("ok"):
         log.error("banChatMember failed user_id=%s: %s", user_id, r.json())
         return False
-    requests.post(f"{API}/unbanChatMember", json={
+    time.sleep(1)
+    r2 = requests.post(f"{API}/unbanChatMember", json={
         "chat_id": CHANNEL_ID,
         "user_id": user_id,
-        "only_if_banned": True,
     }, timeout=10)
+    if not r2.json().get("ok"):
+        log.error("unbanChatMember failed user_id=%s: %s", user_id, r2.json())
     return True
 
 
@@ -198,6 +200,7 @@ def create_invite_link(expire_date: int) -> str | None:
     resp = requests.post(f"{API}/createChatInviteLink", json={
         "chat_id": CHANNEL_ID,
         "expire_date": expire_date,
+        "member_limit": 1,
     }, timeout=10)
     data = resp.json()
     log.info("createChatInviteLink response: %s", data)
