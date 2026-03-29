@@ -75,6 +75,22 @@ def _ensure_table():
                 ALTER TABLE trial_users
                 ADD COLUMN IF NOT EXISTS email TEXT
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS payments (
+                    id                  SERIAL PRIMARY KEY,
+                    user_id             BIGINT,
+                    stripe_session_id   TEXT UNIQUE,
+                    stripe_customer_id  TEXT,
+                    email               TEXT,
+                    first_name          TEXT,
+                    amount              INTEGER,
+                    currency            TEXT,
+                    plan                TEXT,
+                    status              TEXT NOT NULL DEFAULT 'paid',
+                    expires_at          TIMESTAMPTZ,
+                    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
         conn.commit()
 
 
