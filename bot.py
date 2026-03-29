@@ -196,7 +196,12 @@ def kick_user(user_id: int) -> bool:
     return True
 
 
-def create_invite_link(expire_date: int) -> str | None:
+def create_invite_link(expire_date: int, user_id: int = None) -> str | None:
+    if user_id:
+        requests.post(f"{API}/unbanChatMember", json={
+            "chat_id": CHANNEL_ID,
+            "user_id": user_id,
+        }, timeout=10)
     resp = requests.post(f"{API}/createChatInviteLink", json={
         "chat_id": CHANNEL_ID,
         "expire_date": expire_date,
@@ -300,7 +305,7 @@ def handle_trial_request(user: dict, callback_id: str):
 
     expires_at  = datetime.now(timezone.utc) + timedelta(days=7)
     expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
-    link = create_invite_link(expire_unix)
+    link = create_invite_link(expire_unix, user_id)
 
     if not link:
         answer_callback(callback_id, "Error generando el acceso. Intenta de nuevo.")
@@ -352,7 +357,7 @@ def handle_approve(user_id: int, callback_id: str, message_id: int, chat_id: int
 
     expires_at  = datetime.now(timezone.utc) + timedelta(days=7)
     expire_unix = int(expires_at.timestamp())
-    link = create_invite_link(expire_unix)
+    link = create_invite_link(expire_unix, user_id)
 
     if not link:
         answer_callback(callback_id, "Error generando el link.")
@@ -486,7 +491,7 @@ def process_update(update: dict):
                     chat_info = chat_resp.get("result", {})
                     first_name = chat_info.get("first_name", "")
                     username   = chat_info.get("username", "")
-                    link = create_invite_link(expire_unix)
+                    link = create_invite_link(expire_unix, target_id)
                     if link:
                         _save_trial(target_id, username, first_name, expires_at, plan)
                         send_message(target_id, (
