@@ -227,6 +227,7 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
             metadata={"telegram_id": str(telegram_id), "telegram_name": name},
             success_url=f"{SITE_URL}/success.html",
             cancel_url=SITE_URL,
+            allow_promotion_codes=True,
         )
         return session.url
     except Exception as e:
