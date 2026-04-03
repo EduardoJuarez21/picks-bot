@@ -32,6 +32,16 @@ SITE_URL          = os.getenv("SITE_URL", "https://picksterx.win")
 DB_URL            = os.getenv("DATABASE_URL")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID   = os.getenv("STRIPE_PRICE_ID", "price_1TFRnp3CGjhkjYbVsnHAAlOl")
+STRIPE_COUPON_25  = os.getenv("STRIPE_COUPON_25_ID")   # cupón 25 % primera compra sin referido
+def _fetch_bot_username() -> str:
+    try:
+        me = requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe", timeout=10).json()
+        return me["result"]["username"]
+    except Exception as e:
+        log.error("No se pudo obtener el username del bot: %s", e)
+        return ""
+
+BOT_USERNAME = _fetch_bot_username()
 
 if STRIPE_SECRET_KEY:
     stripe_lib.api_key = STRIPE_SECRET_KEY
@@ -91,6 +101,15 @@ def _ensure_table():
                     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS referrals (
+                    referrer_id   BIGINT NOT NULL,
+                    referred_id   BIGINT NOT NULL PRIMARY KEY,
+                    coupon_id     TEXT,
+                    coupon_used   BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """)
         conn.commit()
 
 
@@ -123,6 +142,68 @@ def _mark_removed(user_id: int):
                 "UPDATE trial_users SET removed_at = NOW() WHERE user_id = %s",
                 (user_id,)
             )
+        conn.commit()
+
+
+def _has_paid(user_id: int) -> bool:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM trial_users WHERE user_id = %s AND plan = 'vip'", (user_id,))
+            return cur.fetchone() is not None
+
+
+def _save_referral(referrer_id: int, referred_id: int):
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO referrals (referrer_id, referred_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (referrer_id, referred_id))
+        conn.commit()
+
+
+def _get_referrer(referred_id: int) -> int | None:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT referrer_id FROM referrals
+                WHERE referred_id = %s AND coupon_id IS NULL
+            """, (referred_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def _save_coupon_for_referrer(referrer_id: int, coupon_id: str):
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE referrals SET coupon_id = %s
+                WHERE referrer_id = %s AND coupon_id IS NULL AND coupon_used = FALSE
+            """, (coupon_id, referrer_id))
+        conn.commit()
+
+
+def _get_pending_coupon(referrer_id: int) -> str | None:
+    """Devuelve el coupon_id pendiente de usar del referidor."""
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT coupon_id FROM referrals
+                WHERE referrer_id = %s AND coupon_id IS NOT NULL AND coupon_used = FALSE
+                LIMIT 1
+            """, (referrer_id,))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+
+def _mark_coupon_used(referrer_id: int):
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE referrals SET coupon_used = TRUE
+                WHERE referrer_id = %s AND coupon_used = FALSE
+            """, (referrer_id,))
         conn.commit()
 
 
@@ -221,17 +302,43 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
     if not STRIPE_SECRET_KEY:
         return None
     try:
-        session = stripe_lib.checkout.Session.create(
+        kwargs = dict(
             mode="payment",
             line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
             metadata={"telegram_id": str(telegram_id), "telegram_name": name},
             success_url=f"{SITE_URL}/success.html",
             cancel_url=SITE_URL,
-            allow_promotion_codes=True,
         )
+        # Prioridad: cupón 40% de referido > 25% primera compra > precio normal
+        pending_coupon = _get_pending_coupon(telegram_id)
+        if pending_coupon:
+            kwargs["discounts"] = [{"coupon": pending_coupon}]
+            _mark_coupon_used(telegram_id)
+        elif not _has_paid(telegram_id) and STRIPE_COUPON_25:
+            key = "promotion_code" if STRIPE_COUPON_25.startswith("promo_") else "coupon"
+            kwargs["discounts"] = [{key: STRIPE_COUPON_25}]
+        else:
+            kwargs["allow_promotion_codes"] = True
+        session = stripe_lib.checkout.Session.create(**kwargs)
         return session.url
     except Exception as e:
         log.error("Stripe checkout error: %s", e)
+        return None
+
+
+def create_stripe_coupon_40() -> str | None:
+    """Crea un cupón interno de 40% de un solo uso. Se aplica automáticamente al checkout."""
+    if not STRIPE_SECRET_KEY:
+        return None
+    try:
+        coupon = stripe_lib.Coupon.create(
+            percent_off=40,
+            duration="once",
+            max_redemptions=1,
+        )
+        return coupon.id
+    except Exception as e:
+        log.error("Stripe coupon 40% error: %s", e)
         return None
 
 
@@ -256,6 +363,16 @@ def handle_start(user: dict, param: str = ""):
     name     = user.get("first_name", "")
     username = user.get("username", "")
     log.info("/start user_id=%s username=%s name=%s param=%s", user_id, username, name, param)
+
+    # Deep link de referido — registrar quién lo invitó
+    if param.startswith("ref_"):
+        try:
+            referrer_id = int(param[4:])
+            if referrer_id != user_id:
+                _save_referral(referrer_id, user_id)
+                log.info("Referral guardado: referrer=%s referred=%s", referrer_id, user_id)
+        except ValueError:
+            pass
 
     # Deep link desde el sitio web — ir directo al pago
     if param == "pay":
@@ -313,12 +430,30 @@ def handle_trial_request(user: dict, callback_id: str):
         return
 
     _save_trial(user_id, username, name, expires_at, "trial")
+
+    # Si vino referido, guardar cupón del 40% en DB y avisar al referidor
+    referrer_id = _get_referrer(user_id)
+    if referrer_id:
+        coupon_id = create_stripe_coupon_40()
+        if coupon_id:
+            _save_coupon_for_referrer(referrer_id, coupon_id)
+            send_message(referrer_id, (
+                f"🎁 <b>¡Alguien se unió con tu link de referido!</b>\n\n"
+                f"Tienes un <b>40% de descuento</b> guardado para tu próxima compra.\n"
+                f"Se aplicará automáticamente cuando vayas a pagar. 🎯"
+            ))
+            log.info("Cupón 40%% guardado para referidor=%s por referido=%s", referrer_id, user_id)
+
+    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
     answer_callback(callback_id)
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
         f"Toca el botón para unirte al canal privado.\n\n"
         f"⏳ El link expira en 24 horas — úsalo ya.\n"
-        f"📅 Tu acceso es válido por 7 días."
+        f"📅 Tu acceso es válido por 7 días.\n\n"
+        f"🔗 <b>¿Conoces a alguien que le interese?</b>\n"
+        f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra:\n"
+        f"{ref_link}"
     ), reply_markup={"inline_keyboard": [[
         {"text": "📢 Unirse al canal", "url": link}
     ]]})
@@ -515,6 +650,13 @@ def process_update(update: dict):
     if text.startswith("/start"):
         param = text.split(" ", 1)[1].strip() if " " in text else ""
         handle_start(user, param)
+    elif text == "/ref":
+        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+        send_message(user_id, (
+            f"🔗 <b>Tu link de referido</b>\n\n"
+            f"{ref_link}\n\n"
+            f"Cuando alguien se una con tu link, recibirás un <b>40% de descuento</b> en tu próxima compra."
+        ))
     elif any(p in text.lower() for p in ["quiero trial", "trial", "prueba"]):
         if not _has_used_trial(user_id):
             name     = user.get("first_name", "")
@@ -538,7 +680,7 @@ def process_update(update: dict):
 
 def run():
     _ensure_table()
-    log.info("Bot iniciado. Escuchando...")
+    log.info("Bot iniciado como @%s. Escuchando...", BOT_USERNAME)
     offset = None
     while True:
         try:
