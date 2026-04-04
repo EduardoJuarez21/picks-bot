@@ -628,11 +628,29 @@ def process_update(update: dict):
                 send_message(int(_cmd_chat), "❌ Formato: /unban <user_id>")
             return
 
-        if text == "/broadcast_ref":
-            users = _get_all_users()
+        if text.startswith("/broadcast_ref"):
+            parts = text.split()[1:]
+            if parts:
+                # IDs específicos
+                id_list = []
+                for p in parts:
+                    try:
+                        id_list.append((int(p), None))
+                    except ValueError:
+                        pass
+                users = id_list
+            else:
+                users = _get_all_users()
             sent = 0
             failed = 0
             for uid, first_name in users:
+                # Si vino de IDs específicos, obtener first_name de la DB
+                if first_name is None:
+                    with _db() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT first_name FROM trial_users WHERE user_id = %s", (uid,))
+                            row = cur.fetchone()
+                            first_name = row[0] if row else ""
                 ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
                 try:
                     send_message(uid, (
