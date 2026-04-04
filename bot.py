@@ -207,11 +207,19 @@ def _mark_coupon_used(referrer_id: int):
         conn.commit()
 
 
+def _get_all_users() -> list:
+    with _db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT user_id, first_name FROM trial_users")
+            return cur.fetchall()
+
+
 def _has_used_trial(user_id: int) -> bool:
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM trial_users WHERE user_id = %s", (user_id,))
             return cur.fetchone() is not None
+
 
 
 def _save_trial(user_id: int, username: str, first_name: str, expires_at: datetime, plan: str = "vip"):
@@ -390,10 +398,14 @@ def handle_start(user: dict, param: str = ""):
         return
 
     if _has_used_trial(user_id):
+        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         send_message(user_id, (
             f"Hola {name} 👋\n\n"
             f"Ya utilizaste tu prueba gratuita.\n\n"
-            f"Para continuar con acceso VIP, suscríbete:"
+            f"Para continuar con acceso VIP, suscríbete.\n\n"
+            f"🔗 <b>Tu link de referido:</b>\n"
+            f"{ref_link}\n\n"
+            f"Comparte y gana <b>40% de descuento</b> en tu próxima compra."
         ), reply_markup={"inline_keyboard": [[
             {"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}
         ]]})
@@ -499,11 +511,15 @@ def handle_approve(user_id: int, callback_id: str, message_id: int, chat_id: int
         answer_callback(callback_id, "Error generando el link.")
         return
 
+    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
     send_message(user_id, (
         f"✅ <b>Acceso aprobado — 7 días gratis</b>\n\n"
         f"Úsalo para unirte al canal privado:\n{link}\n\n"
         f"⏳ El link expira en 24 horas — úsalo ya.\n"
-        f"📅 Tu acceso es válido por 7 días."
+        f"📅 Tu acceso es válido por 7 días.\n\n"
+        f"🔗 <b>¿Conoces a alguien que le interese?</b>\n"
+        f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra:\n"
+        f"{ref_link}"
     ))
 
     answer_callback(callback_id, "✅ Aprobado")
@@ -610,6 +626,26 @@ def process_update(update: dict):
                     send_message(int(_cmd_chat), "❌ Formato: /unban <user_id>")
             else:
                 send_message(int(_cmd_chat), "❌ Formato: /unban <user_id>")
+            return
+
+        if text == "/broadcast_ref":
+            users = _get_all_users()
+            sent = 0
+            failed = 0
+            for uid, first_name in users:
+                ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
+                try:
+                    send_message(uid, (
+                        f"Hola {first_name or ''} 👋\n\n"
+                        f"🔗 <b>Tu link de referido:</b>\n"
+                        f"{ref_link}\n\n"
+                        f"Compártelo con alguien que le interesen los picks y gana <b>40% de descuento</b> en tu próxima compra. 🎯"
+                    ))
+                    sent += 1
+                except Exception:
+                    failed += 1
+                time.sleep(0.05)  # ~20 msg/s, bajo límite de Telegram
+            send_message(int(_cmd_chat), f"✅ Broadcast ref enviado: {sent} ok, {failed} fallidos.")
             return
 
         if text.startswith("/invite"):
