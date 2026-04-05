@@ -23,11 +23,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-TOKEN      = os.getenv("TELEGRAM_BOT_TOKEN")
-CHANNEL_ID = os.getenv("TELEGRAM_CHAT_ID")          # -1003809470070 (Pickster)
-ADMIN_CHAT = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
-INBOX_CHAT = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
-CMD_CHAT   = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
+TOKEN           = os.getenv("TELEGRAM_BOT_TOKEN")
+CHANNEL_ID      = os.getenv("TELEGRAM_CHAT_ID")          # canal fútbol
+MLB_CHANNEL_ID  = os.getenv("TELEGRAM_MLB_CHAT_ID")      # canal MLB
+ADMIN_CHAT      = os.getenv("TELEGRAM_RESULTS_CHAT_ID")  # notificaciones del cron
+INBOX_CHAT      = os.getenv("TELEGRAM_INBOX_CHAT_ID")    # chat donde llegan mensajes de usuarios
+CMD_CHAT        = os.getenv("TELEGRAM_ADMIN_CHAT_ID")    # chat desde donde se envían comandos /msg /invite
 SITE_URL          = os.getenv("SITE_URL", "https://picksterx.win")
 DB_URL            = os.getenv("DATABASE_URL")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
@@ -86,6 +87,10 @@ def _ensure_table():
                 ADD COLUMN IF NOT EXISTS email TEXT
             """)
             cur.execute("""
+                ALTER TABLE trial_users
+                ADD COLUMN IF NOT EXISTS sport TEXT NOT NULL DEFAULT 'futbol'
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS payments (
                     id                  SERIAL PRIMARY KEY,
                     user_id             BIGINT,
@@ -117,7 +122,7 @@ def _get_expired_users() -> list:
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, first_name, username, plan
+                SELECT user_id, first_name, username, plan, sport
                 FROM trial_users
                 WHERE expires_at < NOW() AND removed_at IS NULL
             """)
@@ -128,7 +133,7 @@ def _get_manually_removed_users() -> list:
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT user_id, first_name, username, plan
+                SELECT user_id, first_name, username, plan, sport
                 FROM trial_users
                 WHERE removed_at IS NOT NULL AND expires_at > NOW()
             """)
@@ -222,17 +227,18 @@ def _has_used_trial(user_id: int) -> bool:
 
 
 
-def _save_trial(user_id: int, username: str, first_name: str, expires_at: datetime, plan: str = "vip"):
+def _save_trial(user_id: int, username: str, first_name: str, expires_at: datetime, plan: str = "vip", sport: str = "futbol"):
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO trial_users (user_id, username, first_name, expires_at, plan)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO trial_users (user_id, username, first_name, expires_at, plan, sport)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE
                     SET expires_at = EXCLUDED.expires_at,
                         plan       = EXCLUDED.plan,
+                        sport      = EXCLUDED.sport,
                         removed_at = NULL
-            """, (user_id, username, first_name, expires_at, plan))
+            """, (user_id, username, first_name, expires_at, plan, sport))
         conn.commit()
 
 
@@ -266,42 +272,53 @@ def answer_callback(callback_id: str, text: str = ""):
     }, timeout=10)
 
 
-def kick_user(user_id: int) -> bool:
-    """Remueve al usuario del canal y levanta el ban para que pueda volver a ser invitado."""
-    r = requests.post(f"{API}/banChatMember", json={
-        "chat_id": CHANNEL_ID,
-        "user_id": user_id,
-    }, timeout=10)
-    if not r.json().get("ok"):
-        log.error("banChatMember failed user_id=%s: %s", user_id, r.json())
-        return False
-    time.sleep(1)
-    r2 = requests.post(f"{API}/unbanChatMember", json={
-        "chat_id": CHANNEL_ID,
-        "user_id": user_id,
-    }, timeout=10)
-    if not r2.json().get("ok"):
-        log.error("unbanChatMember failed user_id=%s: %s", user_id, r2.json())
-    return True
+def _channels_for_sport(sport: str) -> list[str]:
+    """Devuelve la lista de channel IDs según el deporte elegido."""
+    channels = []
+    if sport in ("futbol", "ambos") and CHANNEL_ID:
+        channels.append(CHANNEL_ID)
+    if sport in ("mlb", "ambos") and MLB_CHANNEL_ID:
+        channels.append(MLB_CHANNEL_ID)
+    return channels or ([CHANNEL_ID] if CHANNEL_ID else [])
+
+
+def kick_user(user_id: int, sport: str = "futbol") -> bool:
+    """Remueve al usuario de los canales que le corresponden según su deporte."""
+    ok = False
+    for ch in _channels_for_sport(sport):
+        r = requests.post(f"{API}/banChatMember", json={"chat_id": ch, "user_id": user_id}, timeout=10)
+        if not r.json().get("ok"):
+            log.error("banChatMember failed user_id=%s channel=%s: %s", user_id, ch, r.json())
+            continue
+        time.sleep(1)
+        requests.post(f"{API}/unbanChatMember", json={"chat_id": ch, "user_id": user_id}, timeout=10)
+        ok = True
+    return ok
+
+
+def create_invite_links(expire_date: int, user_id: int, sport: str) -> list[str]:
+    """Crea invite links para los canales que corresponden al deporte elegido."""
+    links = []
+    for ch in _channels_for_sport(sport):
+        requests.post(f"{API}/unbanChatMember", json={"chat_id": ch, "user_id": user_id}, timeout=10)
+        resp = requests.post(f"{API}/createChatInviteLink", json={
+            "chat_id": ch,
+            "expire_date": expire_date,
+            "member_limit": 1,
+        }, timeout=10)
+        data = resp.json()
+        log.info("createChatInviteLink channel=%s response: %s", ch, data)
+        if data.get("ok"):
+            links.append(data["result"]["invite_link"])
+        else:
+            log.error("createChatInviteLink failed channel=%s: %s", ch, data)
+    return links
 
 
 def create_invite_link(expire_date: int, user_id: int = None) -> str | None:
-    if user_id:
-        requests.post(f"{API}/unbanChatMember", json={
-            "chat_id": CHANNEL_ID,
-            "user_id": user_id,
-        }, timeout=10)
-    resp = requests.post(f"{API}/createChatInviteLink", json={
-        "chat_id": CHANNEL_ID,
-        "expire_date": expire_date,
-        "member_limit": 1,
-    }, timeout=10)
-    data = resp.json()
-    log.info("createChatInviteLink response: %s", data)
-    if data.get("ok"):
-        return data["result"]["invite_link"]
-    log.error("createChatInviteLink failed: %s", data)
-    return None
+    """Compatibilidad: invite al canal de fútbol."""
+    links = create_invite_links(expire_date, user_id or 0, "futbol")
+    return links[0] if links else None
 
 
 # ── Stripe ───────────────────────────────────────────────────────────────────
@@ -426,24 +443,43 @@ def handle_start(user: dict, param: str = ""):
 
 
 def handle_trial_request(user: dict, callback_id: str):
+    user_id = user["id"]
+    if _has_used_trial(user_id):
+        answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
+        return
+    answer_callback(callback_id)
+    send_message(user_id, (
+        "¿Qué deporte te interesa?\n\n"
+        "Elige el canal al que quieres unirte durante tu prueba de 7 días:"
+    ), reply_markup={"inline_keyboard": [
+        [
+            {"text": "⚽ Fútbol",  "callback_data": "trial_sport:futbol"},
+            {"text": "⚾ MLB",     "callback_data": "trial_sport:mlb"},
+        ],
+        [{"text": "🏆 Ambos canales", "callback_data": "trial_sport:ambos"}],
+    ]})
+
+
+def handle_trial_sport(user: dict, sport: str, callback_id: str):
     user_id  = user["id"]
     name     = user.get("first_name", "")
     username = user.get("username", "")
+
     if _has_used_trial(user_id):
         answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
         return
 
     expires_at  = datetime.now(timezone.utc) + timedelta(days=7)
     expire_unix = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
-    link = create_invite_link(expire_unix, user_id)
+    links = create_invite_links(expire_unix, user_id, sport)
 
-    if not link:
+    if not links:
         answer_callback(callback_id, "Error generando el acceso. Intenta de nuevo.")
         return
 
-    _save_trial(user_id, username, name, expires_at, "trial")
+    _save_trial(user_id, username, name, expires_at, "trial", sport)
 
-    # Si vino referido, guardar cupón del 40% en DB y avisar al referidor
+    # Si vino referido, guardar cupón del 40%
     referrer_id = _get_referrer(user_id)
     if referrer_id:
         coupon_id = create_stripe_coupon_40()
@@ -456,21 +492,23 @@ def handle_trial_request(user: dict, callback_id: str):
             ))
             log.info("Cupón 40%% guardado para referidor=%s por referido=%s", referrer_id, user_id)
 
+    sport_label = {"futbol": "⚽ Fútbol", "mlb": "⚾ MLB", "ambos": "⚽ Fútbol + ⚾ MLB"}.get(sport, sport)
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
     answer_callback(callback_id)
+
+    buttons = [[{"text": f"📢 Unirse — {sport_label}", "url": lnk}] for lnk in links]
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
-        f"Toca el botón para unirte al canal privado.\n\n"
+        f"Canal(es): <b>{sport_label}</b>\n\n"
+        f"Toca el botón para unirte.\n"
         f"⏳ El link expira en 24 horas — úsalo ya.\n"
         f"📅 Tu acceso es válido por 7 días.\n\n"
         f"🔗 <b>¿Conoces a alguien que le interese?</b>\n"
         f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra:\n"
         f"{ref_link}"
-    ), reply_markup={"inline_keyboard": [[
-        {"text": "📢 Unirse al canal", "url": link}
-    ]]})
+    ), reply_markup={"inline_keyboard": buttons})
     notify_inbox(
-        f"🆓 Trial activado automáticamente\n"
+        f"🆓 Trial activado — {sport_label}\n"
         f"👤 {name} (@{username}) [{user_id}]"
     )
 
@@ -553,6 +591,10 @@ def handle_callback_query(callback: dict):
     elif data == "trial":
         user_from = callback.get("from", {})
         handle_trial_request(user_from, callback_id)
+    elif data.startswith("trial_sport:"):
+        sport = data.split(":")[1]
+        user_from = callback.get("from", {})
+        handle_trial_sport(user_from, sport, callback_id)
     elif data == "subscribe":
         user_from = callback.get("from", {})
         handle_subscribe_request(user_from, callback_id)
@@ -756,9 +798,9 @@ def _run_expiry_check():
     while True:
         try:
             expired = _get_expired_users()
-            for user_id, first_name, username, plan in expired:
-                log.info("Expirado plan=%s removiendo user_id=%s", plan, user_id)
-                if kick_user(user_id):
+            for user_id, first_name, username, plan, sport in expired:
+                log.info("Expirado plan=%s sport=%s removiendo user_id=%s", plan, sport, user_id)
+                if kick_user(user_id, sport):
                     _mark_removed(user_id)
                     checkout_url = create_stripe_checkout(user_id, first_name or "")
                     if plan == "trial":
@@ -780,9 +822,9 @@ def _run_expiry_check():
                     )
                     log.info("Removido user_id=%s", user_id)
 
-            for user_id, first_name, username, plan in _get_manually_removed_users():
-                log.info("Remoción manual plan=%s user_id=%s", plan, user_id)
-                if kick_user(user_id):
+            for user_id, first_name, username, plan, sport in _get_manually_removed_users():
+                log.info("Remoción manual plan=%s sport=%s user_id=%s", plan, sport, user_id)
+                if kick_user(user_id, sport):
                     notify_admin(
                         f"🔴 Removido manualmente — {first_name} (@{username}) [{user_id}]"
                     )
