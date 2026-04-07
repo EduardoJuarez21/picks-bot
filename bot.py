@@ -486,7 +486,12 @@ def handle_trial_sport(user: dict, sport: str, callback_id: str):
     ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
     answer_callback(callback_id)
 
-    buttons = [[{"text": f"📢 Unirse — {sport_label}", "url": lnk}] for lnk in links]
+    channel_labels = []
+    if sport in ("futbol", "ambos"):
+        channel_labels.append("⚽ Fútbol")
+    if sport in ("mlb", "ambos"):
+        channel_labels.append("⚾ MLB")
+    buttons = [[{"text": f"📢 Unirse — {channel_labels[i] if i < len(channel_labels) else sport_label}", "url": lnk}] for i, lnk in enumerate(links)]
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
         f"Canal(es): <b>{sport_label}</b>\n\n"
