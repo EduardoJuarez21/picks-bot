@@ -171,13 +171,13 @@ def _get_referrer(referred_id: int) -> int | None:
             return row[0] if row else None
 
 
-def _save_coupon_for_referrer(referrer_id: int, coupon_id: str):
+def _save_coupon_for_referrer(referrer_id: int, referred_id: int, coupon_id: str):
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE referrals SET coupon_id = %s
-                WHERE referrer_id = %s AND coupon_id IS NULL AND coupon_used = FALSE
-            """, (coupon_id, referrer_id))
+                WHERE referrer_id = %s AND referred_id = %s
+            """, (coupon_id, referrer_id, referred_id))
         conn.commit()
 
 
@@ -195,12 +195,15 @@ def _get_pending_coupon(referrer_id: int) -> str | None:
 
 
 def _mark_coupon_used(referrer_id: int):
+    coupon_id = _get_pending_coupon(referrer_id)
+    if not coupon_id:
+        return
     with _db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE referrals SET coupon_used = TRUE
-                WHERE referrer_id = %s AND coupon_used = FALSE
-            """, (referrer_id,))
+                WHERE referrer_id = %s AND coupon_id = %s
+            """, (referrer_id, coupon_id))
         conn.commit()
 
 
@@ -465,7 +468,7 @@ def handle_trial_sport(user: dict, sport: str, callback_id: str):
     if referrer_id:
         coupon_id = create_stripe_coupon_40()
         if coupon_id:
-            _save_coupon_for_referrer(referrer_id, coupon_id)
+            _save_coupon_for_referrer(referrer_id, user_id, coupon_id)
             send_message(referrer_id, (
                 f"🎁 <b>¡Alguien se unió con tu link de referido!</b>\n\n"
                 f"Tienes un <b>40% de descuento</b> guardado para tu próxima compra.\n"
