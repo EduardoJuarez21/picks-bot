@@ -34,15 +34,7 @@ DB_URL            = os.getenv("DATABASE_URL")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID   = os.getenv("STRIPE_PRICE_ID", "price_1TFRnp3CGjhkjYbVsnHAAlOl")
 STRIPE_COUPON_25  = os.getenv("STRIPE_COUPON_25_ID")   # cupón 25 % primera compra sin referido
-def _fetch_bot_username() -> str:
-    try:
-        me = requests.get(f"https://api.telegram.org/bot{TOKEN}/getMe", timeout=10).json()
-        return me["result"]["username"]
-    except Exception as e:
-        log.error("No se pudo obtener el username del bot: %s", e)
-        return ""
-
-BOT_USERNAME = _fetch_bot_username()
+BOT_USERNAME = "Pickster2"
 
 if STRIPE_SECRET_KEY:
     stripe_lib.api_key = STRIPE_SECRET_KEY
@@ -338,7 +330,6 @@ def create_stripe_checkout(telegram_id: int, name: str) -> str | None:
         pending_coupon = _get_pending_coupon(telegram_id)
         if pending_coupon:
             kwargs["discounts"] = [{"coupon": pending_coupon}]
-            _mark_coupon_used(telegram_id)
         elif not _has_paid(telegram_id) and STRIPE_COUPON_25:
             key = "promotion_code" if STRIPE_COUPON_25.startswith("promo_") else "coupon"
             kwargs["discounts"] = [{key: STRIPE_COUPON_25}]
@@ -721,6 +712,8 @@ def process_update(update: dict):
                     link = create_invite_link(expire_unix, target_id)
                     if link:
                         _save_trial(target_id, username, first_name, expires_at, plan)
+                        if plan == "vip":
+                            _mark_coupon_used(target_id)
                         send_message(target_id, (
                             f"✅ <b>Acceso al canal activado</b>\n\n"
                             f"Úsalo para unirte al canal privado:\n{link}\n\n"
@@ -798,15 +791,22 @@ def _run_expiry_check():
                 if kick_user(user_id, sport):
                     _mark_removed(user_id)
                     checkout_url = create_stripe_checkout(user_id, first_name or "")
+                    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
                     if plan == "trial":
                         text = (
                             "⏰ <b>Tu prueba gratuita de 7 días ha expirado.</b>\n\n"
-                            "¿Te gustó el servicio? Suscríbete para seguir recibiendo picks VIP:"
+                            "¿Te gustó el servicio? Suscríbete para seguir recibiendo picks VIP:\n\n"
+                            "🔗 <b>¿Conoces a alguien que le interesen los picks?</b>\n"
+                            f"Comparte tu link — cuando alguien se una, recibirás <b>40% de descuento automático</b> en tu suscripción:\n"
+                            f"{ref_link}"
                         )
                     else:
                         text = (
                             "⏰ <b>Tu suscripción VIP ha expirado.</b>\n\n"
-                            "Renueva para seguir teniendo acceso al canal de picks:"
+                            "Renueva para seguir teniendo acceso al canal de picks:\n\n"
+                            "🔗 <b>¿Conoces a alguien que le interesen los picks?</b>\n"
+                            f"Comparte tu link — cuando alguien se una, recibirás <b>40% de descuento automático</b> en tu renovación:\n"
+                            f"{ref_link}"
                         )
                     markup = {"inline_keyboard": [[
                         {"text": "💳 Renovar — MXN 250", "url": checkout_url}
