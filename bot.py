@@ -361,6 +361,11 @@ def create_stripe_coupon_40() -> str | None:
         return None
 
 
+def _ref_button(user_id: int) -> dict:
+    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+    return {"text": "🔗 Copiar mi link de referido", "copy_text": {"text": ref_link}}
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def notify_admin(text: str):
@@ -413,7 +418,6 @@ def handle_start(user: dict, param: str = ""):
         return
 
     if _has_used_trial(user_id):
-        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         send_message(user_id, (
             f"Hola {name} 👋\n\n"
             f"Ya utilizaste tu prueba gratuita.\n\n"
@@ -421,7 +425,7 @@ def handle_start(user: dict, param: str = ""):
             f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra."
         ), reply_markup={"inline_keyboard": [
             [{"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}],
-            [{"text": "🔗 Mi link de referido", "url": ref_link}],
+            [_ref_button(user_id)],
         ]})
     else:
         send_message(user_id, (
@@ -485,7 +489,6 @@ def handle_trial_sport(user: dict, sport: str, callback_id: str):
             log.info("Cupón 40%% guardado para referidor=%s por referido=%s", referrer_id, user_id)
 
     sport_label = {"futbol": "⚽ Fútbol", "mlb": "⚾ MLB", "ambos": "⚽ Fútbol + ⚾ MLB"}.get(sport, sport)
-    ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
     answer_callback(callback_id)
 
     channel_labels = []
@@ -494,7 +497,7 @@ def handle_trial_sport(user: dict, sport: str, callback_id: str):
     if sport in ("mlb", "ambos"):
         channel_labels.append("⚾ MLB")
     buttons = [[{"text": f"📢 Unirse — {channel_labels[i] if i < len(channel_labels) else sport_label}", "url": lnk}] for i, lnk in enumerate(links)]
-    buttons.append([{"text": "🔗 Mi link de referido", "url": ref_link}])
+    buttons.append([_ref_button(user_id)])
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
         f"Canal(es): <b>{sport_label}</b>\n\n"
@@ -748,13 +751,10 @@ def process_update(update: dict):
         param = text.split(" ", 1)[1].strip() if " " in text else ""
         handle_start(user, param)
     elif text == "/ref":
-        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         send_message(user_id, (
             f"🔗 <b>Tu link de referido</b>\n\n"
             f"Cuando alguien se una con tu link, recibirás un <b>40% de descuento</b> en tu próxima compra."
-        ), reply_markup={"inline_keyboard": [[
-            {"text": "🔗 Mi link de referido", "url": ref_link}
-        ]]})
+        ), reply_markup={"inline_keyboard": [[_ref_button(user_id)]]})
     elif any(p in text.lower() for p in ["quiero trial", "trial", "prueba"]):
         if not _has_used_trial(user_id):
             name     = user.get("first_name", "")
@@ -822,14 +822,13 @@ def _run_expiry_check():
                             f"Comparte tu link — cuando alguien se una, recibirás <b>40% de descuento automático</b> en tu renovación:\n"
                             f"{ref_link}"
                         )
-                    ref_btn = [{"text": "🔗 Mi link de referido", "url": ref_link}]
                     if checkout_url:
                         markup = {"inline_keyboard": [
                             [{"text": "💳 Renovar — MXN 250", "url": checkout_url}],
-                            [ref_btn[0]],
+                            [_ref_button(user_id)],
                         ]}
                     else:
-                        markup = {"inline_keyboard": [[ref_btn[0]]]}
+                        markup = {"inline_keyboard": [[_ref_button(user_id)]]}
                     send_message(user_id, text, reply_markup=markup)
                     notify_admin(
                         f"🔴 {plan.upper()} expirado — {first_name} (@{username}) [{user_id}] removido del canal"
