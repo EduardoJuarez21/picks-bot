@@ -390,6 +390,10 @@ def handle_start(user: dict, param: str = ""):
             if referrer_id != user_id:
                 _save_referral(referrer_id, user_id)
                 log.info("Referral guardado: referrer=%s referred=%s", referrer_id, user_id)
+                send_message(referrer_id, (
+                    f"👀 <b>Alguien usó tu link de referido</b>\n\n"
+                    f"Si se registra en la prueba gratuita, recibirás <b>40% de descuento</b> automático en tu próxima compra. 🎯"
+                ))
         except ValueError:
             pass
 
@@ -414,12 +418,11 @@ def handle_start(user: dict, param: str = ""):
             f"Hola {name} 👋\n\n"
             f"Ya utilizaste tu prueba gratuita.\n\n"
             f"Para continuar con acceso VIP, suscríbete.\n\n"
-            f"🔗 <b>Tu link de referido:</b>\n"
-            f"{ref_link}\n\n"
-            f"Comparte y gana <b>40% de descuento</b> en tu próxima compra."
-        ), reply_markup={"inline_keyboard": [[
-            {"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}
-        ]]})
+            f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra."
+        ), reply_markup={"inline_keyboard": [
+            [{"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}],
+            [{"text": "🔗 Mi link de referido", "url": ref_link}],
+        ]})
     else:
         send_message(user_id, (
             f"Hola {name} 👋\n\n"
@@ -441,7 +444,12 @@ def handle_trial_request(user: dict, callback_id: str):
     if _has_used_trial(user_id):
         answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
         return
-    handle_trial_sport(user, "ambos", callback_id)
+    answer_callback(callback_id)
+    send_message(user_id, "¿A qué canal quieres acceder?", reply_markup={"inline_keyboard": [
+        [{"text": "⚽ Fútbol",       "callback_data": "trial_sport:futbol"}],
+        [{"text": "⚾ MLB",           "callback_data": "trial_sport:mlb"}],
+        [{"text": "🏆 Ambos canales", "callback_data": "trial_sport:ambos"}],
+    ]})
 
 
 def handle_trial_sport(user: dict, sport: str, callback_id: str):
@@ -486,15 +494,14 @@ def handle_trial_sport(user: dict, sport: str, callback_id: str):
     if sport in ("mlb", "ambos"):
         channel_labels.append("⚾ MLB")
     buttons = [[{"text": f"📢 Unirse — {channel_labels[i] if i < len(channel_labels) else sport_label}", "url": lnk}] for i, lnk in enumerate(links)]
+    buttons.append([{"text": "🔗 Mi link de referido", "url": ref_link}])
     send_message(user_id, (
         f"✅ <b>Acceso de prueba activado — 7 días gratis</b>\n\n"
         f"Canal(es): <b>{sport_label}</b>\n\n"
         f"Toca el botón para unirte.\n"
         f"⏳ El link expira en 24 horas — úsalo ya.\n"
         f"📅 Tu acceso es válido por 7 días.\n\n"
-        f"🔗 <b>¿Conoces a alguien que le interese?</b>\n"
-        f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra:\n"
-        f"{ref_link}"
+        f"🔗 Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra."
     ), reply_markup={"inline_keyboard": buttons})
     notify_inbox(
         f"🆓 Trial activado — {sport_label}\n"
@@ -698,11 +705,13 @@ def process_update(update: dict):
             return
 
         if text.startswith("/invite"):
-            parts = text.split(" ", 2)
+            parts = text.split(" ", 3)
             if len(parts) >= 2:
                 try:
                     target_id  = int(parts[1])
-                    is_trial   = len(parts) == 3 and parts[2].strip().lower() == "trial"
+                    flags      = [p.strip().lower() for p in parts[2:]]
+                    is_trial   = "trial" in flags
+                    sport      = next((f for f in flags if f in ("futbol", "mlb", "ambos")), "ambos")
                     plan       = "trial" if is_trial else "vip"
                     days       = 7 if is_trial else 30
                     expires_at = datetime.now(timezone.utc) + timedelta(days=days)
@@ -712,24 +721,25 @@ def process_update(update: dict):
                     chat_info = chat_resp.get("result", {})
                     first_name = chat_info.get("first_name", "")
                     username   = chat_info.get("username", "")
-                    link = create_invite_link(expire_unix, target_id)
-                    if link:
-                        _save_trial(target_id, username, first_name, expires_at, plan)
+                    links = create_invite_links(expire_unix, target_id, sport)
+                    if links:
+                        _save_trial(target_id, username, first_name, expires_at, plan, sport)
                         if plan == "vip":
                             _mark_coupon_used(target_id)
+                        links_text = "\n".join(links)
                         send_message(target_id, (
                             f"✅ <b>Acceso al canal activado</b>\n\n"
-                            f"Úsalo para unirte al canal privado:\n{link}\n\n"
+                            f"Úsalo para unirte al canal privado:\n{links_text}\n\n"
                             f"⏳ El link expira en 24 horas — úsalo ya.\n"
                             f"📅 Tu acceso es válido por {days} días."
                         ))
-                        send_message(int(_cmd_chat), f"✅ Invite enviado a [{target_id}] — plan {plan} ({days} días) registrado.")
+                        send_message(int(_cmd_chat), f"✅ Invite enviado a [{target_id}] — plan {plan} ({days} días) sport {sport} registrado.")
                     else:
                         send_message(int(_cmd_chat), f"❌ Error generando link para [{target_id}]")
                 except ValueError:
-                    send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial]")
+                    send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial] [futbol|mlb|ambos]")
             else:
-                send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial]")
+                send_message(int(_cmd_chat), "❌ Formato: /invite <user_id> [trial] [futbol|mlb|ambos]")
             return
 
     user_id = user.get("id")
@@ -741,9 +751,10 @@ def process_update(update: dict):
         ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
         send_message(user_id, (
             f"🔗 <b>Tu link de referido</b>\n\n"
-            f"{ref_link}\n\n"
             f"Cuando alguien se una con tu link, recibirás un <b>40% de descuento</b> en tu próxima compra."
-        ))
+        ), reply_markup={"inline_keyboard": [[
+            {"text": "🔗 Mi link de referido", "url": ref_link}
+        ]]})
     elif any(p in text.lower() for p in ["quiero trial", "trial", "prueba"]):
         if not _has_used_trial(user_id):
             name     = user.get("first_name", "")
@@ -811,9 +822,14 @@ def _run_expiry_check():
                             f"Comparte tu link — cuando alguien se una, recibirás <b>40% de descuento automático</b> en tu renovación:\n"
                             f"{ref_link}"
                         )
-                    markup = {"inline_keyboard": [[
-                        {"text": "💳 Renovar — MXN 250", "url": checkout_url}
-                    ]]} if checkout_url else None
+                    ref_btn = [{"text": "🔗 Mi link de referido", "url": ref_link}]
+                    if checkout_url:
+                        markup = {"inline_keyboard": [
+                            [{"text": "💳 Renovar — MXN 250", "url": checkout_url}],
+                            [ref_btn[0]],
+                        ]}
+                    else:
+                        markup = {"inline_keyboard": [[ref_btn[0]]]}
                     send_message(user_id, text, reply_markup=markup)
                     notify_admin(
                         f"🔴 {plan.upper()} expirado — {first_name} (@{username}) [{user_id}] removido del canal"
