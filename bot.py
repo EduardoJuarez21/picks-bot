@@ -34,7 +34,7 @@ DB_URL            = os.getenv("DATABASE_URL")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_PRICE_ID   = os.getenv("STRIPE_PRICE_ID", "price_1TFRnp3CGjhkjYbVsnHAAlOl")
 STRIPE_COUPON_25  = os.getenv("STRIPE_COUPON_25_ID")   # cupón 25 % primera compra sin referido
-BOT_USERNAME = "Pickster2"
+BOT_USERNAME = "PicksterV_bot"
 
 if STRIPE_SECRET_KEY:
     stripe_lib.api_key = STRIPE_SECRET_KEY
