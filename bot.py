@@ -279,16 +279,19 @@ def _channels_for_sport(sport: str) -> list[str]:
 
 def kick_user(user_id: int, sport: str = "futbol") -> bool:
     """Remueve al usuario de los canales que le corresponden según su deporte."""
-    ok = False
-    for ch in _channels_for_sport(sport):
+    channels = _channels_for_sport(sport)
+    if not channels:
+        return False
+    all_ok = True
+    for ch in channels:
         r = requests.post(f"{API}/banChatMember", json={"chat_id": ch, "user_id": user_id}, timeout=10)
         if not r.json().get("ok"):
             log.error("banChatMember failed user_id=%s channel=%s: %s", user_id, ch, r.json())
+            all_ok = False
             continue
         time.sleep(1)
         requests.post(f"{API}/unbanChatMember", json={"chat_id": ch, "user_id": user_id}, timeout=10)
-        ok = True
-    return ok
+    return all_ok
 
 
 def create_invite_links(expire_date: int, user_id: int, sport: str) -> list[str]:
