@@ -410,7 +410,7 @@ def handle_start(user: dict, param: str = ""):
         checkout_url = create_stripe_checkout(user_id, name)
         if checkout_url:
             send_message(user_id, (
-                f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
+                f"💳 <b>Suscripción VIP — MXN 169/mes</b>\n\n"
                 f"Toca el botón para completar tu pago.\n\n"
                 f"Una vez pagado recibirás el acceso al canal automáticamente."
             ), reply_markup={"inline_keyboard": [[
@@ -427,7 +427,7 @@ def handle_start(user: dict, param: str = ""):
             f"Para continuar con acceso VIP, suscríbete.\n\n"
             f"Comparte tu link y gana <b>40% de descuento</b> en tu próxima compra."
         ), reply_markup={"inline_keyboard": [
-            [{"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}],
+            [{"text": "💳 Suscribirme — MXN 169/mes", "callback_data": "subscribe"}],
             [_ref_button(user_id)],
         ]})
     else:
@@ -438,7 +438,7 @@ def handle_start(user: dict, param: str = ""):
             f"Elige tu opción:"
         ), reply_markup={"inline_keyboard": [
             [{"text": "🆓 Prueba gratuita (7 días)", "callback_data": "trial"}],
-            [{"text": "💳 Suscribirme — MXN 250/mes", "callback_data": "subscribe"}],
+            [{"text": "💳 Suscribirme — MXN 169/mes", "callback_data": "subscribe"}],
         ]})
         notify_inbox(
             f"🔔 Nuevo usuario\n"
@@ -523,7 +523,7 @@ def handle_subscribe_request(user: dict, callback_id: str | None):
         if callback_id:
             answer_callback(callback_id)
         send_message(user_id, (
-            f"💳 <b>Suscripción VIP — MXN 250/mes</b>\n\n"
+            f"💳 <b>Suscripción VIP — MXN 169/mes</b>\n\n"
             f"Toca el botón para completar tu pago.\n\n"
             f"Una vez pagado recibirás el acceso al canal automáticamente."
         ), reply_markup={"inline_keyboard": [[
@@ -827,7 +827,7 @@ def _run_expiry_check():
                         )
                     if checkout_url:
                         markup = {"inline_keyboard": [
-                            [{"text": "💳 Renovar — MXN 250", "url": checkout_url}],
+                            [{"text": "💳 Renovar — MXN 169", "url": checkout_url}],
                             [_ref_button(user_id)],
                         ]}
                     else:
