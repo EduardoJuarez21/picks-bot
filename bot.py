@@ -452,10 +452,8 @@ def handle_trial_request(user: dict, callback_id: str):
         answer_callback(callback_id, "Ya utilizaste tu prueba gratuita.")
         return
     answer_callback(callback_id)
-    send_message(user_id, "¿A qué canal quieres acceder?", reply_markup={"inline_keyboard": [
-        [{"text": "⚽ Fútbol",       "callback_data": "trial_sport:futbol"}],
-        [{"text": "⚾ MLB",           "callback_data": "trial_sport:mlb"}],
-        [{"text": "🏆 Ambos canales", "callback_data": "trial_sport:ambos"}],
+    send_message(user_id, "Tu prueba gratis incluye todos nuestros picks VIP.", reply_markup={"inline_keyboard": [
+        [{"text": "⚽⚾ Acceder a fútbol + MLB", "callback_data": "trial_sport:ambos"}],
     ]})
 
 
